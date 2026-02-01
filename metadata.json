@@ -1,0 +1,5 @@
+{
+  "name": "Gemini CAD Studio",
+  "description": "A professional, browser-based 2D CAD application featuring AI-powered generative design, parametric tools, and DXF compatibility.",
+  "requestFramePermissions": []
+}
