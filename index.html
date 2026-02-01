@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
-    <title>Gemini CAD Studio</title>
+    <title>Gemini CAD Studio (Pure JS)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -31,37 +31,571 @@
         background-color: #0f172a;
         color: #e2e8f0;
         overflow: hidden;
+        user-select: none;
       }
-      /* Custom Scrollbar */
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #1e293b; 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #475569; 
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #64748b; 
-      }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #1e293b; }
+      ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+      
+      .tool-btn.active { background-color: #38bdf8; color: #0f172a; font-weight: bold; }
+      .layer-row.active { background-color: #334155; }
     </style>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
-    "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0"
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="./index.tsx"></script>
-  </body>
+<body class="flex flex-col h-screen font-sans text-cad-text bg-cad-bg">
+
+    <!-- Header -->
+    <header class="h-12 bg-cad-panel border-b border-cad-border flex items-center justify-between px-4 shrink-0 z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 bg-gradient-to-tr from-blue-600 to-cyan-400 rounded-lg flex items-center justify-center font-bold text-white shadow-lg">G</div>
+            <h1 class="font-bold text-lg tracking-tight">Gemini <span class="font-light text-cad-accent">CAD Studio</span></h1>
+        </div>
+        <div class="flex items-center gap-2">
+            <div class="flex bg-slate-900 rounded-md border border-cad-border p-1">
+                <button id="btn-undo" class="p-1 hover:bg-slate-700 rounded text-gray-400 hover:text-white" title="Undo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+                </button>
+                <button id="btn-redo" class="p-1 hover:bg-slate-700 rounded text-gray-400 hover:text-white" title="Redo">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+                </button>
+            </div>
+            <button id="btn-export" class="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded-md text-xs font-semibold transition-all text-white">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                Export DXF
+            </button>
+        </div>
+    </header>
+
+    <!-- Toolbar -->
+    <div class="h-16 bg-cad-panel border-b border-cad-border flex items-center px-4 gap-6 shrink-0 z-10 overflow-x-auto">
+        <!-- Draw Group -->
+        <div class="flex gap-1 pr-6 border-r border-cad-border" id="tool-group">
+            <button class="tool-btn p-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-cad-text hover:bg-cad-border" data-tool="SELECT" title="Select">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg>
+                <span class="text-[10px] uppercase tracking-wide">Select</span>
+            </button>
+            <button class="tool-btn p-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-cad-text hover:bg-cad-border" data-tool="LINE" title="Line">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span class="text-[10px] uppercase tracking-wide">Line</span>
+            </button>
+            <button class="tool-btn p-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-cad-text hover:bg-cad-border" data-tool="RECTANGLE" title="Rectangle">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                <span class="text-[10px] uppercase tracking-wide">Rect</span>
+            </button>
+            <button class="tool-btn p-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-cad-text hover:bg-cad-border" data-tool="CIRCLE" title="Circle">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+                <span class="text-[10px] uppercase tracking-wide">Circle</span>
+            </button>
+            <button class="tool-btn p-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-cad-text hover:bg-cad-border" data-tool="TEXT" title="Text">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
+                <span class="text-[10px] uppercase tracking-wide">Text</span>
+            </button>
+        </div>
+
+        <!-- Modify Group -->
+        <div class="flex gap-1 pr-6 border-r border-cad-border">
+            <button id="btn-delete" class="p-2 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors text-cad-text hover:bg-cad-border text-red-400 hover:text-red-300">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                <span class="text-[10px] uppercase tracking-wide">Delete</span>
+            </button>
+        </div>
+
+        <!-- AI Input -->
+        <form id="ai-form" class="flex-1 max-w-xl flex gap-2 items-center">
+            <div class="relative flex-1">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none" id="ai-icon">
+                    <svg class="text-cad-accent" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+                </div>
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none hidden" id="ai-loader">
+                    <svg class="animate-spin text-yellow-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                </div>
+                <input type="text" id="ai-input" placeholder="Describe a shape (e.g., 'Draw a house')" class="w-full bg-slate-900 border border-cad-border rounded-md py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-cad-accent focus:ring-1 focus:ring-cad-accent transition-all text-white">
+            </div>
+            <button type="submit" id="ai-submit" class="bg-cad-accent text-slate-900 px-4 py-2 rounded-md text-sm font-bold hover:bg-sky-300 disabled:opacity-50 transition-colors">Generate</button>
+        </form>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="flex flex-1 overflow-hidden relative">
+        <!-- Canvas Area -->
+        <div id="canvas-container" class="flex-1 bg-[#0b1120] relative cursor-crosshair overflow-hidden">
+            <!-- Grid -->
+            <div id="grid-bg" class="absolute inset-0 pointer-events-none opacity-20"></div>
+            
+            <!-- SVG -->
+            <svg id="cad-view" class="w-full h-full block">
+                <g id="viewport">
+                    <line x1="0" y1="0" x2="50" y2="0" stroke="red" stroke-width="2" />
+                    <line x1="0" y1="0" x2="0" y2="50" stroke="#10b981" stroke-width="2" />
+                    <g id="entities-layer"></g>
+                    <g id="preview-layer" opacity="0.6"></g>
+                </g>
+            </svg>
+
+            <!-- Command Line -->
+            <div class="absolute bottom-4 left-4 right-80 h-32 bg-slate-900/90 border border-cad-border rounded-lg flex flex-col shadow-2xl backdrop-blur-sm z-30">
+                <div id="cmd-history" class="flex-1 p-2 overflow-y-auto font-mono text-xs text-slate-400 space-y-1">
+                    <div>Welcome to Gemini CAD Studio.</div>
+                </div>
+                <div class="border-t border-cad-border p-2 flex items-center gap-2">
+                    <span class="text-cad-accent font-bold text-xs">CMD &gt;</span>
+                    <input id="cmd-input" class="bg-transparent border-none focus:outline-none text-white text-sm w-full font-mono" placeholder="Type a command...">
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Sidebar -->
+        <div class="w-72 bg-cad-panel border-l border-cad-border flex flex-col z-20">
+            <!-- Layers -->
+            <div class="flex flex-col h-1/2 border-b border-cad-border">
+                <div class="p-3 bg-slate-900 border-b border-cad-border flex justify-between items-center">
+                    <span class="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                        Layers
+                    </span>
+                    <button id="btn-new-layer" class="text-xs bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-cad-border text-white">+ New</button>
+                </div>
+                <div id="layers-list" class="flex-1 overflow-y-auto"></div>
+            </div>
+
+            <!-- Properties -->
+            <div class="flex flex-col h-1/2">
+                <div class="p-3 bg-slate-900 border-b border-cad-border">
+                    <span class="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                        Properties
+                    </span>
+                </div>
+                <div id="properties-content" class="p-4 space-y-4 text-xs">
+                    <div class="text-slate-500 italic text-center mt-10">No selection</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="h-8 bg-cad-bg border-t border-cad-border flex items-center px-4 justify-between text-[10px] text-slate-400 font-mono">
+        <div class="flex gap-4">
+            <span id="status-coords">X: 0.00 Y: 0.00</span>
+            <span id="status-items">Items: 0</span>
+        </div>
+        <div class="flex gap-4">
+            <span class="hover:text-white cursor-pointer">SNAP: ON</span>
+            <span id="status-zoom">Zoom: 100%</span>
+        </div>
+    </div>
+
+    <!-- Application Logic -->
+    <script type="module">
+        import { GoogleGenAI, Type } from "@google/genai";
+
+        // --- State ---
+        const state = {
+            entities: [],
+            layers: [
+                { id: '0', name: '0 (Default)', color: '#ffffff', visible: true, locked: false },
+                { id: '1', name: 'Construction', color: '#38bdf8', visible: true, locked: false },
+                { id: '2', name: 'Dimensions', color: '#fbbf24', visible: true, locked: false },
+            ],
+            activeLayerId: '0',
+            view: { x: 0, y: 0, zoom: 1.0 },
+            tool: 'SELECT',
+            selectedIds: [],
+            isDrawing: false,
+            startPoint: null,
+            dragStart: null,
+            previewEntity: null,
+            mousePos: { x: 0, y: 0 },
+            history: [], // For undo/redo (not fully implemented in simplified version but placeholders exist)
+        };
+
+        // --- Constants & Helpers ---
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const distance = (p1, p2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+        const screenToWorld = (sx, sy) => ({
+            x: (sx - state.view.x) / state.view.zoom,
+            y: (sy - state.view.y) / state.view.zoom
+        });
+        
+        const log = (msg) => {
+            const history = document.getElementById('cmd-history');
+            const div = document.createElement('div');
+            div.textContent = msg;
+            history.appendChild(div);
+            history.scrollTop = history.scrollHeight;
+        };
+
+        // --- DOM Elements ---
+        const svgEl = document.getElementById('cad-view');
+        const viewportEl = document.getElementById('viewport');
+        const entitiesEl = document.getElementById('entities-layer');
+        const previewEl = document.getElementById('preview-layer');
+        const gridBg = document.getElementById('grid-bg');
+        const layersList = document.getElementById('layers-list');
+        const propertiesContent = document.getElementById('properties-content');
+
+        // --- Rendering ---
+        function render() {
+            // Update Grid
+            gridBg.style.backgroundImage = `linear-gradient(#334155 1px, transparent 1px), linear-gradient(90deg, #334155 1px, transparent 1px)`;
+            gridBg.style.backgroundSize = `${20 * state.view.zoom}px ${20 * state.view.zoom}px`;
+            gridBg.style.backgroundPosition = `${state.view.x}px ${state.view.y}px`;
+
+            // Update Viewport Transform
+            viewportEl.setAttribute('transform', `translate(${state.view.x}, ${state.view.y}) scale(${state.view.zoom})`);
+
+            // Render Entities
+            entitiesEl.innerHTML = '';
+            state.entities.forEach(ent => {
+                const layer = state.layers.find(l => l.id === ent.layerId);
+                if (!layer || !layer.visible) return;
+
+                const isSelected = state.selectedIds.includes(ent.id);
+                const color = isSelected ? '#38bdf8' : (ent.color || layer.color);
+                const width = isSelected ? (2 / state.view.zoom + 2) : (1 / state.view.zoom); // Dynamic line width based on zoom
+
+                let el;
+                if (ent.type === 'line') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    el.setAttribute('x1', ent.start.x); el.setAttribute('y1', ent.start.y);
+                    el.setAttribute('x2', ent.end.x); el.setAttribute('y2', ent.end.y);
+                    el.setAttribute('stroke-linecap', 'round');
+                } else if (ent.type === 'rect') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    el.setAttribute('x', ent.x); el.setAttribute('y', ent.y);
+                    el.setAttribute('width', ent.width); el.setAttribute('height', ent.height);
+                    el.setAttribute('fill', 'none');
+                } else if (ent.type === 'circle') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    el.setAttribute('cx', ent.cx); el.setAttribute('cy', ent.cy); el.setAttribute('r', ent.r);
+                    el.setAttribute('fill', 'none');
+                } else if (ent.type === 'text') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    el.setAttribute('x', ent.x); el.setAttribute('y', ent.y);
+                    el.setAttribute('font-size', ent.fontSize);
+                    el.setAttribute('fill', color);
+                    el.textContent = ent.text;
+                }
+
+                if (el && ent.type !== 'text') {
+                    el.setAttribute('stroke', color);
+                    el.setAttribute('stroke-width', width);
+                }
+                entitiesEl.appendChild(el);
+            });
+
+            // Render Preview
+            previewEl.innerHTML = '';
+            if (state.previewEntity) {
+                const ent = state.previewEntity;
+                let el;
+                if (ent.type === 'line') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    el.setAttribute('x1', ent.start.x); el.setAttribute('y1', ent.start.y);
+                    el.setAttribute('x2', ent.end.x); el.setAttribute('y2', ent.end.y);
+                } else if (ent.type === 'rect') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    el.setAttribute('x', ent.x); el.setAttribute('y', ent.y);
+                    el.setAttribute('width', ent.width); el.setAttribute('height', ent.height);
+                    el.setAttribute('fill', 'none');
+                } else if (ent.type === 'circle') {
+                    el = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                    el.setAttribute('cx', ent.cx); el.setAttribute('cy', ent.cy); el.setAttribute('r', ent.r);
+                    el.setAttribute('fill', 'none');
+                }
+                if (el) {
+                    el.setAttribute('stroke', 'yellow');
+                    el.setAttribute('stroke-width', 1 / state.view.zoom);
+                    el.setAttribute('stroke-dasharray', '5,5');
+                    previewEl.appendChild(el);
+                }
+            }
+
+            renderLayers();
+            renderProperties();
+            updateStatus();
+        }
+
+        function renderLayers() {
+            layersList.innerHTML = '';
+            state.layers.forEach(layer => {
+                const row = document.createElement('div');
+                row.className = `layer-row flex items-center gap-2 p-2 text-sm cursor-pointer border-b border-cad-border ${state.activeLayerId === layer.id ? 'active' : 'hover:bg-opacity-50 hover:bg-cad-border'}`;
+                row.onclick = () => { state.activeLayerId = layer.id; render(); };
+                
+                row.innerHTML = `
+                    <div class="w-3 h-3 rounded-full" style="background-color: ${layer.color}"></div>
+                    <span class="flex-1 font-mono truncate">${layer.name}</span>
+                    <button class="text-gray-400 hover:text-white" onclick="event.stopPropagation(); toggleLayerVis('${layer.id}')">${layer.visible ? '👁️' : '🚫'}</button>
+                `;
+                layersList.appendChild(row);
+            });
+        }
+
+        window.toggleLayerVis = (id) => {
+            const l = state.layers.find(x => x.id === id);
+            if (l) { l.visible = !l.visible; render(); }
+        };
+
+        function renderProperties() {
+            if (state.selectedIds.length === 0) {
+                propertiesContent.innerHTML = '<div class="text-slate-500 italic text-center mt-10">No selection</div>';
+                return;
+            }
+            const ent = state.entities.find(e => e.id === state.selectedIds[0]);
+            if (!ent) return;
+            const layerName = state.layers.find(l => l.id === ent.layerId)?.name || 'Unknown';
+
+            propertiesContent.innerHTML = `
+                <div class="grid grid-cols-2 gap-2">
+                    <label class="text-slate-400">Type</label>
+                    <div class="font-mono text-right text-white">${ent.type.toUpperCase()}</div>
+                    <label class="text-slate-400">Layer</label>
+                    <div class="font-mono text-right text-white">${layerName}</div>
+                    <label class="text-slate-400">ID</label>
+                    <div class="font-mono text-right text-white text-[10px] truncate">${ent.id}</div>
+                </div>
+            `;
+        }
+
+        function updateStatus() {
+            document.getElementById('status-coords').textContent = `X: ${state.mousePos.x.toFixed(2)} Y: ${state.mousePos.y.toFixed(2)}`;
+            document.getElementById('status-items').textContent = `Items: ${state.entities.length}`;
+            document.getElementById('status-zoom').textContent = `Zoom: ${(state.view.zoom * 100).toFixed(0)}%`;
+        }
+
+        // --- Interaction Handlers ---
+        
+        // Tool Selection
+        document.querySelectorAll('.tool-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.tool = btn.dataset.tool;
+                state.selectedIds = [];
+                state.previewEntity = null;
+                log(`Tool: ${state.tool}`);
+                render();
+            });
+        });
+
+        // Canvas Events
+        const container = document.getElementById('canvas-container');
+
+        container.addEventListener('mousedown', (e) => {
+            const rect = container.getBoundingClientRect();
+            const worldPos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+            if (e.button === 1 || state.tool === 'PAN') { // Middle click
+                state.dragStart = { x: e.clientX, y: e.clientY };
+                return;
+            }
+
+            if (state.tool === 'SELECT') {
+                // Simple hit test
+                const hit = state.entities.slice().reverse().find(ent => {
+                    const l = state.layers.find(x => x.id === ent.layerId);
+                    if (!l || !l.visible) return false;
+                    
+                    const tol = 5 / state.view.zoom;
+                    if (ent.type === 'circle') return Math.abs(distance(worldPos, {x:ent.cx, y:ent.cy}) - ent.r) < tol;
+                    if (ent.type === 'line') {
+                         const l2 = Math.pow(distance(ent.start, ent.end), 2);
+                         if (l2 === 0) return distance(worldPos, ent.start) < tol;
+                         const t = Math.max(0, Math.min(1, ((worldPos.x - ent.start.x) * (ent.end.x - ent.start.x) + (worldPos.y - ent.start.y) * (ent.end.y - ent.start.y)) / l2));
+                         const proj = { x: ent.start.x + t * (ent.end.x - ent.start.x), y: ent.start.y + t * (ent.end.y - ent.start.y) };
+                         return distance(worldPos, proj) < tol;
+                    }
+                    if (ent.type === 'rect') return (worldPos.x >= ent.x && worldPos.x <= ent.x + ent.width && worldPos.y >= ent.y && worldPos.y <= ent.y + ent.height); // Simplified rect fill hit
+                    return false;
+                });
+                state.selectedIds = hit ? [hit.id] : [];
+                render();
+                return;
+            }
+
+            // Drawing
+            state.isDrawing = true;
+            state.startPoint = worldPos;
+            const activeColor = state.layers.find(l => l.id === state.activeLayerId).color;
+            const base = { id: generateId(), layerId: state.activeLayerId, color: activeColor };
+
+            if (state.tool === 'LINE') state.previewEntity = { ...base, type: 'line', start: worldPos, end: worldPos };
+            if (state.tool === 'RECTANGLE') state.previewEntity = { ...base, type: 'rect', x: worldPos.x, y: worldPos.y, width: 0, height: 0 };
+            if (state.tool === 'CIRCLE') state.previewEntity = { ...base, type: 'circle', cx: worldPos.x, cy: worldPos.y, r: 0 };
+            
+            render();
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            state.mousePos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+            
+            if (state.dragStart) {
+                const dx = e.clientX - state.dragStart.x;
+                const dy = e.clientY - state.dragStart.y;
+                state.view.x += dx;
+                state.view.y += dy;
+                state.dragStart = { x: e.clientX, y: e.clientY };
+                render();
+                return;
+            }
+
+            if (state.isDrawing && state.previewEntity) {
+                const curr = state.mousePos;
+                const start = state.startPoint;
+                if (state.previewEntity.type === 'line') state.previewEntity.end = curr;
+                if (state.previewEntity.type === 'rect') {
+                    state.previewEntity.width = curr.x - start.x;
+                    state.previewEntity.height = curr.y - start.y;
+                }
+                if (state.previewEntity.type === 'circle') state.previewEntity.r = distance(start, curr);
+                render();
+            } else {
+                updateStatus(); // Just coords update
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (state.dragStart) { state.dragStart = null; return; }
+            if (state.isDrawing) {
+                if (state.previewEntity) {
+                    state.entities.push(state.previewEntity);
+                    log(`Created ${state.previewEntity.type}`);
+                    state.previewEntity = null;
+                }
+                state.isDrawing = false;
+                render();
+            }
+        });
+
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const scaleFactor = 1.1;
+            const newZoom = e.deltaY < 0 ? state.view.zoom * scaleFactor : state.view.zoom / scaleFactor;
+            state.view.zoom = newZoom;
+            render();
+        });
+
+        // Other buttons
+        document.getElementById('btn-delete').addEventListener('click', () => {
+            if (state.selectedIds.length > 0) {
+                state.entities = state.entities.filter(e => !state.selectedIds.includes(e.id));
+                state.selectedIds = [];
+                render();
+                log('Deleted objects');
+            }
+        });
+
+        document.getElementById('btn-new-layer').addEventListener('click', () => {
+            const id = generateId();
+            state.layers.push({ id, name: `Layer ${state.layers.length}`, color: '#ffffff', visible: true, locked: false });
+            state.activeLayerId = id;
+            render();
+        });
+
+        document.getElementById('btn-export').addEventListener('click', () => {
+            // Simple DXF generation (Partial)
+            let s = "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n";
+            state.entities.forEach(ent => {
+                 if (ent.type === 'line') s += `0\nLINE\n8\n${ent.layerId}\n10\n${ent.start.x}\n20\n${-ent.start.y}\n11\n${ent.end.x}\n21\n${-ent.end.y}\n`;
+            });
+            s += "0\nENDSEC\n0\nEOF\n";
+            const blob = new Blob([s], { type: 'application/dxf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = 'drawing.dxf'; a.click();
+            log('Exported DXF');
+        });
+
+        // --- Gemini Integration ---
+        const aiForm = document.getElementById('ai-form');
+        const aiInput = document.getElementById('ai-input');
+        const aiLoader = document.getElementById('ai-loader');
+        const aiIcon = document.getElementById('ai-icon');
+
+        aiForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const prompt = aiInput.value.trim();
+            if (!prompt) return;
+            
+            if (!process.env.API_KEY) {
+                log('Error: API Key missing');
+                alert("API Key is missing. Please configure it in your environment/build settings.");
+                return;
+            }
+
+            aiLoader.classList.remove('hidden');
+            aiIcon.classList.add('hidden');
+            log(`AI: Generating "${prompt}"...`);
+
+            try {
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                
+                const response = await ai.models.generateContent({
+                    model: 'gemini-3-flash-preview',
+                    contents: prompt,
+                    config: {
+                        systemInstruction: `You are a CAD engine. Output JSON array of entities: line(startX,startY,endX,endY), circle(cx,cy,r), rect(x,y,width,height). Canvas 1000x800.`,
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    type: { type: Type.STRING, enum: ['line', 'circle', 'rect'] },
+                                    startX: { type: Type.NUMBER }, startY: { type: Type.NUMBER }, endX: { type: Type.NUMBER }, endY: { type: Type.NUMBER },
+                                    cx: { type: Type.NUMBER }, cy: { type: Type.NUMBER }, r: { type: Type.NUMBER },
+                                    x: { type: Type.NUMBER }, y: { type: Type.NUMBER }, width: { type: Type.NUMBER }, height: { type: Type.NUMBER }
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                const items = JSON.parse(response.text);
+                if (Array.isArray(items)) {
+                    let count = 0;
+                    items.forEach(item => {
+                        const base = { id: generateId(), layerId: state.activeLayerId, selected: false };
+                        if (item.type === 'line') state.entities.push({ ...base, type: 'line', start: {x:item.startX, y:item.startY}, end: {x:item.endX, y:item.endY} });
+                        if (item.type === 'rect') state.entities.push({ ...base, type: 'rect', x: item.x, y: item.y, width: item.width, height: item.height });
+                        if (item.type === 'circle') state.entities.push({ ...base, type: 'circle', cx: item.cx, cy: item.cy, r: item.r });
+                        count++;
+                    });
+                    log(`AI: Generated ${count} entities.`);
+                    render();
+                }
+
+            } catch (err) {
+                console.error(err);
+                log('AI: Error generating content');
+            } finally {
+                aiLoader.classList.add('hidden');
+                aiIcon.classList.remove('hidden');
+                aiInput.value = '';
+            }
+        });
+
+        // Init
+        render();
+        // Activate default tool
+        document.querySelector('[data-tool="SELECT"]').classList.add('active');
+        
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
 </html>
