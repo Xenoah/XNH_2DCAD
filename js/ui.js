@@ -352,8 +352,8 @@ export function renderPropertiesPanel() {
       rows.push(['Center X', ent.cx.toFixed(3), true, v => { pushHistory(); ent.cx = parseFloat(v); render(); }]);
       rows.push(['Center Y', ent.cy.toFixed(3), true, v => { pushHistory(); ent.cy = parseFloat(v); render(); }]);
       rows.push(['Radius', ent.r.toFixed(3), true, v => { pushHistory(); ent.r = Math.abs(parseFloat(v)); render(); }]);
-      rows.push(['Start Ang', (ent.startAngle * 180 / Math.PI).toFixed(1) + '°', false]);
-      rows.push(['End Ang', (ent.endAngle * 180 / Math.PI).toFixed(1) + '°', false]);
+      rows.push(['Start °', (ent.startAngle * 180 / Math.PI).toFixed(2), true, v => { pushHistory(); ent.startAngle = parseFloat(v) * Math.PI / 180; render(); }]);
+      rows.push(['End °',   (ent.endAngle   * 180 / Math.PI).toFixed(2), true, v => { pushHistory(); ent.endAngle   = parseFloat(v) * Math.PI / 180; render(); }]);
       break;
     case 'rect':
       rows.push(['X', ent.x.toFixed(3), true, v => { pushHistory(); ent.x = parseFloat(v); render(); }]);
@@ -363,7 +363,7 @@ export function renderPropertiesPanel() {
       rows.push(['Area', (Math.abs(ent.width) * Math.abs(ent.height)).toFixed(3), false]);
       break;
     case 'polyline':
-      rows.push(['Points', ent.points.length, false]);
+      rows.push(['Pts', ent.points.length, false]);
       rows.push(['Closed', ent.closed ? 'Yes' : 'No', false]);
       break;
     case 'text':
@@ -401,6 +401,45 @@ export function renderPropertiesPanel() {
     }
 
     panel.appendChild(row);
+  }
+
+  // Polyline vertex editor
+  if (ent.type === 'polyline') {
+    const hdr = document.createElement('div');
+    hdr.className = 'text-[9px] text-gray-500 uppercase tracking-wider mt-2 mb-1 border-b border-cad-border pb-0.5';
+    hdr.textContent = `Vertices (${ent.points.length})`;
+    panel.appendChild(hdr);
+
+    ent.points.forEach((pt, idx) => {
+      const vrow = document.createElement('div');
+      vrow.style.cssText = 'display:grid;grid-template-columns:28px 1fr 1fr;gap:3px;align-items:center;margin-bottom:2px';
+
+      const lbl = document.createElement('div');
+      lbl.className = 'prop-label';
+      lbl.textContent = `P${idx + 1}`;
+
+      const makeInp = (axis) => {
+        const inp = document.createElement('input');
+        inp.className = 'prop-input';
+        inp.value = pt[axis].toFixed(3);
+        inp.title = `P${idx + 1} ${axis.toUpperCase()}`;
+        inp.placeholder = axis.toUpperCase();
+        inp.addEventListener('change', () => {
+          const n = parseFloat(inp.value);
+          if (isNaN(n)) return;
+          pushHistory();
+          pt[axis] = n;
+          render();
+        });
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); e.stopPropagation(); });
+        return inp;
+      };
+
+      vrow.appendChild(lbl);
+      vrow.appendChild(makeInp('x'));
+      vrow.appendChild(makeInp('y'));
+      panel.appendChild(vrow);
+    });
   }
 
   // Layer selector

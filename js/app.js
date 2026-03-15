@@ -2,7 +2,7 @@
  * app.js - Application initialization, event wiring, keyboard shortcuts
  */
 
-import { state, screenToWorld, computeSnapPoint, undo, redo, pushHistory, zoomExtents, makeEntityBase } from './core.js';
+import { state, genId, screenToWorld, computeSnapPoint, undo, redo, pushHistory, zoomExtents, makeEntityBase } from './core.js';
 import { render } from './render.js';
 import {
   TOOLS, activateTool, deleteSelected, selectAll,
@@ -13,7 +13,7 @@ import {
   renderLayerPanel, renderPropertiesPanel,
   initColorPicker, createNewLayer,
 } from './ui.js';
-import { exportDXF, saveJSON, loadJSON } from './dxf.js';
+import { exportDXF, saveJSON, loadJSON, importDXF } from './dxf.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Initialization
@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initModeToggles();
   initHeaderButtons();
   initCommandLine();
+  initToolbarTabs();
   initTextInputOverlay();
   initColorPicker();
   initAI();
@@ -198,6 +199,7 @@ function cancelCurrent() {
     tool.onKeyDown({ key: 'Escape', preventDefault: () => {} });
   }
   state.selectedIds = new Set();
+  activateTool('SELECT');
   render();
   renderPropertiesPanel();
 }
@@ -218,6 +220,28 @@ function initToolbar() {
     deleteSelected();
     renderPropertiesPanel();
     updateStatusBar();
+  });
+}
+
+function initToolbarTabs() {
+  document.querySelectorAll('.toolbar-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      // Update tab buttons
+      document.querySelectorAll('.toolbar-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // Show/hide panels (use flex for visible, hidden for others)
+      ['draw', 'edit', 'view', 'modes'].forEach(t => {
+        const panel = document.getElementById(`tab-panel-${t}`);
+        if (t === tab) {
+          panel.classList.remove('hidden');
+          panel.classList.add('flex');
+        } else {
+          panel.classList.add('hidden');
+          panel.classList.remove('flex');
+        }
+      });
+    });
   });
 }
 
@@ -309,21 +333,67 @@ function initHeaderButtons() {
   document.getElementById('file-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        loadJSON(ev.target.result);
-        renderLayerPanel();
-        render();
-        renderPropertiesPanel();
-        updateStatusBar();
-        document.getElementById('file-name').textContent = file.name;
-        log(`Loaded: ${file.name}`);
-      } catch (err) {
-        logError('Failed to load file: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
+    const ext = file.name.split('.').pop().toLowerCase();
+
+    if (ext === 'dxf') {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          _applyDXFImport(importDXF(ev.target.result), file.name);
+        } catch (err) {
+          logError('Failed to import DXF: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    } else if (ext === 'dwg') {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const bytes = new Uint8Array(ev.target.result);
+        const magic = String.fromCharCode(...bytes.slice(0, 6));
+        if (magic.startsWith('AC10')) {
+          // Binary DWG - check if it might actually be text-based (DXF saved as .dwg)
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(0, 200));
+          if (text.includes('SECTION') || text.includes('ENTITIES')) {
+            try {
+              const fullText = new TextDecoder().decode(bytes);
+              _applyDXFImport(importDXF(fullText), file.name);
+            } catch (err) {
+              logError('Failed to parse file: ' + err.message);
+            }
+          } else {
+            logError('DWG binary format (AC1009-AC1032) cannot be imported directly.');
+            log('Tip: Open the file in AutoCAD or FreeCAD and "Save As DXF", then import here.');
+            log('Or use an online converter: cloudconvert.com, convertio.co');
+          }
+        } else {
+          // Maybe it's a DXF with wrong extension
+          const text = new TextDecoder().decode(bytes);
+          try {
+            _applyDXFImport(importDXF(text), file.name);
+          } catch (err) {
+            logError('Cannot parse file as DXF or DWG: ' + err.message);
+          }
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      // .xnh or .json
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          loadJSON(ev.target.result);
+          renderLayerPanel();
+          render();
+          renderPropertiesPanel();
+          updateStatusBar();
+          document.getElementById('file-name').textContent = file.name;
+          log(`Loaded: ${file.name}`);
+        } catch (err) {
+          logError('Failed to load file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
     e.target.value = '';
   });
 
@@ -345,6 +415,51 @@ function initHeaderButtons() {
     createNewLayer();
     renderLayerPanel();
   });
+}
+
+function _applyDXFImport(result, filename) {
+  pushHistory();
+  // Merge/add layers
+  for (const [name, ldata] of result.layers) {
+    if (!state.layers.find(l => l.name === name)) {
+      state.layers.push({
+        id: genId(), name: ldata.name, color: ldata.color,
+        visible: ldata.visible, locked: ldata.locked || false, lineType: 'solid',
+      });
+    }
+  }
+  // Ensure layer '0' exists
+  if (!state.layers.find(l => l.name === '0')) {
+    state.layers.push({ id: genId(), name: '0', color: '#ffffff', visible: true, locked: false, lineType: 'solid' });
+  }
+
+  let count = 0;
+  for (const raw of result.entities) {
+    const layerName = raw._layer || '0';
+    let layer = state.layers.find(l => l.name === layerName);
+    if (!layer) {
+      layer = { id: genId(), name: layerName, color: '#ffffff', visible: true, locked: false, lineType: 'solid' };
+      state.layers.push(layer);
+    }
+    const base = { id: genId(), type: raw._type, layerId: layer.id, color: null, lineType: null, lineWeight: null };
+    let ent = null;
+    switch (raw._type) {
+      case 'line':     ent = { ...base, start: { x: raw.x1, y: raw.y1 }, end: { x: raw.x2, y: raw.y2 } }; break;
+      case 'circle':   ent = { ...base, cx: raw.cx, cy: raw.cy, r: raw.r }; break;
+      case 'arc':      ent = { ...base, cx: raw.cx, cy: raw.cy, r: raw.r, startAngle: raw.startAngle, endAngle: raw.endAngle }; break;
+      case 'polyline': ent = { ...base, points: raw.points, closed: raw.closed }; break;
+      case 'text':     ent = { ...base, x: raw.x, y: raw.y, text: raw.text, fontSize: raw.fontSize, angle: raw.angle }; break;
+    }
+    if (ent) { state.entities.push(ent); count++; }
+  }
+
+  renderLayerPanel();
+  render();
+  renderPropertiesPanel();
+  updateStatusBar();
+  document.getElementById('file-name').textContent = filename;
+  log(`Imported ${count} entities from ${filename}`);
+  if (state.entities.length > 0) doZoomExtents();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,14 +515,13 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
   }
 
-  // Escape = deselect + cancel
+  // Escape = cancel + deselect + return to SELECT
   if (e.key === 'Escape') {
-    if (state.selectedIds.size > 0) {
-      state.selectedIds = new Set();
-      render();
-      renderPropertiesPanel();
-      updateStatusBar();
-    }
+    state.selectedIds = new Set();
+    activateTool('SELECT');
+    render();
+    renderPropertiesPanel();
+    updateStatusBar();
   }
 });
 
@@ -433,6 +547,111 @@ function initCommandLine() {
       e.stopPropagation();
     }
     e.stopPropagation(); // Don't let keyboard shortcuts fire
+  });
+
+  initCmdAutocomplete(input);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Command Autocomplete
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CMD_DEFS = [
+  { name:'SELECT',   alias:'ESC',  desc:'Select / deselect entities',      icon:'<path d="M3 3l7 17 2.5-7.5 7.5-2.5L3 3z"/><path d="M13 13l5 5"/>' },
+  { name:'LINE',     alias:'L',    desc:'Draw a line segment',              icon:'<line x1="5" y1="19" x2="19" y2="5"/>' },
+  { name:'POLYLINE', alias:'PL',   desc:'Draw multi-segment polyline',      icon:'<polyline points="3,19 8,10 13,16 19,5"/>' },
+  { name:'RECT',     alias:'REC',  desc:'Draw a rectangle',                 icon:'<rect x="3" y="5" width="18" height="14" rx="1"/>' },
+  { name:'CIRCLE',   alias:'C',    desc:'Draw a circle (center+radius)',    icon:'<circle cx="12" cy="12" r="9"/>' },
+  { name:'ARC',      alias:'A',    desc:'Draw a 3-point arc',               icon:'<path d="M4 20 Q4 4 20 4"/>' },
+  { name:'TEXT',     alias:'T',    desc:'Place single-line text',           icon:'<polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/>' },
+  { name:'MOVE',     alias:'M',    desc:'Move selected entities',           icon:'<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3"/><path d="M3 12h18M12 3v18"/>' },
+  { name:'COPY',     alias:'CP',   desc:'Copy selected entities',           icon:'<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' },
+  { name:'OFFSET',   alias:'O',    desc:'Offset a line/circle/arc',         icon:'<path d="M17 12H3M21 5H7M17 19H3"/>' },
+  { name:'TRIM',     alias:'TR',   desc:'Trim entity at intersection',      icon:'<line x1="5" y1="12" x2="19" y2="12"/><path d="M12 5l-7 7 7 7"/>' },
+  { name:'EXTEND',   alias:'EX',   desc:'Extend line to boundary',          icon:'<line x1="5" y1="12" x2="19" y2="12"/><path d="M12 5l7 7-7 7"/>' },
+  { name:'FILLET',   alias:'F',    desc:'Fillet two lines with arc',        icon:'<path d="M3 21 L3 10 Q3 3 10 3 L21 3"/>' },
+  { name:'STRETCH',  alias:'S',    desc:'Stretch entities by crossing box', icon:'<polyline points="5,12 10,7 10,17"/><line x1="10" y1="12" x2="19" y2="12"/>' },
+  { name:'ARRAY',    alias:'AR',   desc:'Rectangular array of entities',    icon:'<rect x="3" y="3" width="6" height="6"/><rect x="15" y="3" width="6" height="6"/><rect x="3" y="15" width="6" height="6"/><rect x="15" y="15" width="6" height="6"/>' },
+  { name:'HATCH',    alias:'H',    desc:'Fill closed area with hatch',      icon:'<rect x="3" y="3" width="18" height="18"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>' },
+  { name:'UNDO',     alias:'U',    desc:'Undo last action',                 icon:'<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>' },
+  { name:'REDO',     alias:'',     desc:'Redo undone action',               icon:'<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/>' },
+  { name:'ZOOM',     alias:'Z E',  desc:'Zoom extents / window',            icon:'<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>' },
+  { name:'ORTHO',    alias:'F8',   desc:'Toggle ortho mode',                icon:'<line x1="3" y1="3" x2="21" y2="3"/><line x1="3" y1="3" x2="3" y2="21"/>' },
+  { name:'SNAP',     alias:'F3',   desc:'Toggle object snap',               icon:'<circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>' },
+  { name:'SAVE',     alias:'',     desc:'Save drawing as JSON',             icon:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v13a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>' },
+  { name:'OPEN',     alias:'',     desc:'Open / import a drawing file',     icon:'<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>' },
+  { name:'EXPORT',   alias:'DXF',  desc:'Export as DXF file',               icon:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>' },
+  { name:'NEW',      alias:'',     desc:'Create new drawing',               icon:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>' },
+  { name:'HELP',     alias:'?',    desc:'Show command list',                icon:'<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>' },
+];
+
+function initCmdAutocomplete(input) {
+  const suggestions = document.getElementById('cmd-suggestions');
+  let activeIdx = -1;
+
+  function getMatches(q) {
+    if (!q) return [];
+    const upper = q.toUpperCase();
+    return CMD_DEFS.filter(d =>
+      d.name.startsWith(upper) || d.alias.startsWith(upper)
+    ).slice(0, 8);
+  }
+
+  function renderSuggestions(matches) {
+    if (!matches.length) { suggestions.classList.add('hidden'); return; }
+    suggestions.innerHTML = matches.map((d, idx) => `
+      <div class="cmd-suggestion${idx === activeIdx ? ' active' : ''}" data-idx="${idx}">
+        <svg class="cmd-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${d.icon}</svg>
+        <span class="cmd-name">${d.name}</span>
+        <span class="cmd-alias">${d.alias}</span>
+        <span class="cmd-desc">${d.desc}</span>
+      </div>`).join('');
+    suggestions.classList.remove('hidden');
+
+    suggestions.querySelectorAll('.cmd-suggestion').forEach(el => {
+      el.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        const idx = parseInt(el.dataset.idx);
+        input.value = matches[idx].name;
+        suggestions.classList.add('hidden');
+        input.focus();
+      });
+    });
+  }
+
+  input.addEventListener('input', () => {
+    activeIdx = -1;
+    renderSuggestions(getMatches(input.value));
+  });
+
+  input.addEventListener('keydown', (e) => {
+    const matches = getMatches(input.value);
+    if (!matches.length) return;
+
+    if (e.key === 'ArrowDown') {
+      activeIdx = Math.min(activeIdx + 1, matches.length - 1);
+      renderSuggestions(matches);
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      activeIdx = Math.max(activeIdx - 1, -1);
+      renderSuggestions(matches);
+      e.preventDefault();
+    } else if (e.key === 'Tab') {
+      if (activeIdx >= 0) input.value = matches[activeIdx].name;
+      else if (matches.length === 1) input.value = matches[0].name;
+      suggestions.classList.add('hidden');
+      e.preventDefault();
+    }
+    // Enter and Escape handled by existing keydown listener above
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      suggestions.classList.add('hidden');
+      activeIdx = -1;
+    }
+  });
+
+  // Hide on blur
+  input.addEventListener('blur', () => {
+    setTimeout(() => suggestions.classList.add('hidden'), 150);
   });
 }
 

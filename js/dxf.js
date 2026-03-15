@@ -264,3 +264,204 @@ export function loadJSON(jsonStr) {
   if (data.view) state.view = data.view;
   state.selectedIds = new Set();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DXF Import
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse DXF text and return { entities, layers }.
+ * entities: array of raw import objects with _type, _layer, and type-specific fields
+ * layers: Map<name, { name, color, visible, locked }>
+ */
+export function importDXF(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const pairs = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const code = parseInt(lines[i].trim(), 10);
+    const val = lines[i + 1]?.trim() ?? '';
+    if (!isNaN(code)) pairs.push([code, val]);
+  }
+
+  const importedLayers = new Map();
+  const importedEntities = [];
+
+  // ── Pass 1: extract layers from TABLES/LAYER section ──
+  let sec = '', tbl = '', curLayer = null;
+  for (let i = 0; i < pairs.length; i++) {
+    const [c, v] = pairs[i];
+    if (c === 0 && v === 'SECTION') { sec = pairs[i + 1]?.[1] ?? ''; continue; }
+    if (c === 0 && v === 'ENDSEC') { sec = ''; tbl = ''; curLayer = null; continue; }
+    if (c === 0 && v === 'TABLE')  { tbl = pairs[i + 1]?.[1] ?? ''; continue; }
+    if (c === 0 && v === 'ENDTAB') { tbl = ''; curLayer = null; continue; }
+    if (sec !== 'TABLES' || tbl !== 'LAYER') continue;
+    if (c === 0 && v === 'LAYER') {
+      curLayer = { name: '0', color: '#ffffff', visible: true, locked: false };
+      continue;
+    }
+    if (!curLayer) continue;
+    if (c === 2) curLayer.name = v;
+    if (c === 62) {
+      const n = parseInt(v, 10);
+      curLayer.visible = n >= 0;
+      curLayer.color = _aciToHex(Math.abs(n));
+      importedLayers.set(curLayer.name, { ...curLayer });
+    }
+    if (c === 70) curLayer.locked = !!(parseInt(v, 10) & 4);
+  }
+
+  // ── Pass 2: extract entities ──
+  let inEnts = false, i = 0;
+  while (i < pairs.length) {
+    const [c, v] = pairs[i];
+    if (c === 0 && v === 'SECTION') {
+      const name = pairs[i + 1]?.[1] ?? '';
+      inEnts = name === 'ENTITIES' || name === 'BLOCKS';
+      i += 2; continue;
+    }
+    if (c === 0 && v === 'ENDSEC') { inEnts = false; i++; continue; }
+    if (!inEnts) { i++; continue; }
+
+    if (c === 0) {
+      if (v === 'LINE')                    { i = _dxfLine(pairs, i + 1, importedEntities); continue; }
+      if (v === 'CIRCLE')                  { i = _dxfCircle(pairs, i + 1, importedEntities); continue; }
+      if (v === 'ARC')                     { i = _dxfArc(pairs, i + 1, importedEntities); continue; }
+      if (v === 'LWPOLYLINE')              { i = _dxfLwpoly(pairs, i + 1, importedEntities); continue; }
+      if (v === 'POLYLINE')                { i = _dxfPolyline(pairs, i + 1, importedEntities); continue; }
+      if (v === 'TEXT' || v === 'MTEXT')   { i = _dxfText(pairs, i + 1, importedEntities); continue; }
+    }
+    i++;
+  }
+
+  return { entities: importedEntities, layers: importedLayers };
+}
+
+function _dxfReadCommon(pairs, i) {
+  const d = { layer: '0' };
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i];
+    if (c === 8) d.layer = v;
+    i++;
+  }
+  return { d, end: i };
+}
+
+function _dxfLine(pairs, i, out) {
+  const d = { layer: '0', x1: 0, y1: 0, x2: 0, y2: 0 };
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i++];
+    if (c === 8) d.layer = v;
+    else if (c === 10) d.x1 = parseFloat(v);
+    else if (c === 20) d.y1 = -parseFloat(v);
+    else if (c === 11) d.x2 = parseFloat(v);
+    else if (c === 21) d.y2 = -parseFloat(v);
+  }
+  out.push({ _type: 'line', _layer: d.layer, x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2 });
+  return i;
+}
+
+function _dxfCircle(pairs, i, out) {
+  const d = { layer: '0', cx: 0, cy: 0, r: 1 };
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i++];
+    if (c === 8) d.layer = v;
+    else if (c === 10) d.cx = parseFloat(v);
+    else if (c === 20) d.cy = -parseFloat(v);
+    else if (c === 40) d.r = parseFloat(v);
+  }
+  out.push({ _type: 'circle', _layer: d.layer, cx: d.cx, cy: d.cy, r: d.r });
+  return i;
+}
+
+function _dxfArc(pairs, i, out) {
+  const d = { layer: '0', cx: 0, cy: 0, r: 1, sa: 0, ea: 180 };
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i++];
+    if (c === 8) d.layer = v;
+    else if (c === 10) d.cx = parseFloat(v);
+    else if (c === 20) d.cy = -parseFloat(v);
+    else if (c === 40) d.r = parseFloat(v);
+    else if (c === 50) d.sa = parseFloat(v);
+    else if (c === 51) d.ea = parseFloat(v);
+  }
+  // DXF: Y-up, degrees, CCW. Our internal: Y-down, radians.
+  // To convert: flip sign for Y-down, then degrees→radians
+  const startAngle = (-(d.sa) * Math.PI / 180 + 2 * Math.PI) % (2 * Math.PI);
+  const endAngle   = (-(d.ea) * Math.PI / 180 + 2 * Math.PI) % (2 * Math.PI);
+  out.push({ _type: 'arc', _layer: d.layer, cx: d.cx, cy: d.cy, r: d.r, startAngle, endAngle });
+  return i;
+}
+
+function _dxfLwpoly(pairs, i, out) {
+  const d = { layer: '0', closed: false, pts: [] };
+  let cx = null;
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i++];
+    if (c === 8) d.layer = v;
+    else if (c === 70) d.closed = !!(parseInt(v, 10) & 1);
+    else if (c === 10) cx = parseFloat(v);
+    else if (c === 20 && cx !== null) { d.pts.push({ x: cx, y: -parseFloat(v) }); cx = null; }
+  }
+  if (d.pts.length >= 2)
+    out.push({ _type: 'polyline', _layer: d.layer, points: d.pts, closed: d.closed });
+  return i;
+}
+
+function _dxfPolyline(pairs, i, out) {
+  const d = { layer: '0', closed: false, pts: [] };
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i++];
+    if (c === 8) d.layer = v;
+    else if (c === 70) d.closed = !!(parseInt(v, 10) & 1);
+  }
+  // Read VERTEX / SEQEND
+  while (i < pairs.length) {
+    const [c, v] = pairs[i];
+    if (c === 0 && v === 'VERTEX') {
+      i++;
+      let vx = 0, vy = 0;
+      while (i < pairs.length && pairs[i][0] !== 0) {
+        const [vc, vv] = pairs[i++];
+        if (vc === 10) vx = parseFloat(vv);
+        else if (vc === 20) vy = -parseFloat(vv);
+      }
+      d.pts.push({ x: vx, y: vy });
+    } else if (c === 0 && v === 'SEQEND') {
+      i++;
+      while (i < pairs.length && pairs[i][0] !== 0) i++;
+      break;
+    } else break;
+  }
+  if (d.pts.length >= 2)
+    out.push({ _type: 'polyline', _layer: d.layer, points: d.pts, closed: d.closed });
+  return i;
+}
+
+function _dxfText(pairs, i, out) {
+  const d = { layer: '0', x: 0, y: 0, text: '', fontSize: 10, angle: 0 };
+  while (i < pairs.length && pairs[i][0] !== 0) {
+    const [c, v] = pairs[i++];
+    if (c === 8) d.layer = v;
+    else if (c === 10) d.x = parseFloat(v);
+    else if (c === 20) d.y = -parseFloat(v);
+    else if (c === 40) d.fontSize = parseFloat(v);
+    else if (c === 1) d.text = v.replace(/\\P/g, '\n').replace(/\\[^;]*;/g, ''); // strip MTEXT codes
+    else if (c === 50) d.angle = parseFloat(v) * Math.PI / 180;
+  }
+  if (d.text)
+    out.push({ _type: 'text', _layer: d.layer, x: d.x, y: d.y, text: d.text, fontSize: d.fontSize, angle: d.angle });
+  return i;
+}
+
+function _aciToHex(aci) {
+  const t = {
+    1:'#FF0000',2:'#FFFF00',3:'#00FF00',4:'#00FFFF',5:'#0000FF',6:'#FF00FF',
+    7:'#FFFFFF',8:'#808080',9:'#C0C0C0',10:'#FF4040',11:'#FF9999',
+    30:'#FFA500',40:'#FF8000',50:'#FFCC00',70:'#CCCC00',100:'#808000',
+    110:'#007F00',120:'#00B300',130:'#00CC66',140:'#00FFCC',150:'#00E5E5',
+    160:'#00CCCC',170:'#0099CC',180:'#0066CC',190:'#0033CC',200:'#0000CC',
+    210:'#3300CC',220:'#6600CC',230:'#9900CC',240:'#CC00CC',
+    250:'#808080',251:'#606060',252:'#404040',253:'#202020',254:'#101010',255:'#000000',
+  };
+  return t[aci] || '#FFFFFF';
+}
