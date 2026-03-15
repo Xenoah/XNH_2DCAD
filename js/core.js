@@ -447,3 +447,183 @@ export function makeEntityBase(type) {
     lineWeight: null,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extended Geometry Helpers (for OFFSET, TRIM, EXTEND, FILLET)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Infinite line-line intersection.
+ * Returns {x, y, t1, t2} where t1/t2 are params along each line direction.
+ * Returns null if parallel.
+ */
+export function lineLineIntersect(a1, a2, b1, b2) {
+  const dx1 = a2.x - a1.x, dy1 = a2.y - a1.y;
+  const dx2 = b2.x - b1.x, dy2 = b2.y - b1.y;
+  const denom = dx1 * dy2 - dy1 * dx2;
+  if (Math.abs(denom) < 1e-10) return null;
+  const dx3 = b1.x - a1.x, dy3 = b1.y - a1.y;
+  const t1 = (dx3 * dy2 - dy3 * dx2) / denom;
+  const t2 = (dx3 * dy1 - dy3 * dx1) / denom;
+  return { x: a1.x + t1 * dx1, y: a1.y + t1 * dy1, t1, t2 };
+}
+
+/**
+ * Segment-segment intersection (bounded [0,1]).
+ * Returns {x, y} or null.
+ */
+export function segSegIntersect(a1, a2, b1, b2) {
+  const r = lineLineIntersect(a1, a2, b1, b2);
+  if (!r) return null;
+  if (r.t1 < -1e-9 || r.t1 > 1 + 1e-9) return null;
+  if (r.t2 < -1e-9 || r.t2 > 1 + 1e-9) return null;
+  return { x: r.x, y: r.y };
+}
+
+/**
+ * Line-circle intersections.
+ * Returns array of {x, y, t} where t is param along segment (may be outside [0,1]).
+ */
+export function lineCircleIntersect(p1, p2, cx, cy, r) {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const fx = p1.x - cx, fy = p1.y - cy;
+  const a = dx * dx + dy * dy;
+  if (a < 1e-20) return [];
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - r * r;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return [];
+  const sd = Math.sqrt(Math.max(0, disc));
+  const results = [];
+  for (const sign of [-1, 1]) {
+    const t = (-b + sign * sd) / (2 * a);
+    results.push({ x: p1.x + t * dx, y: p1.y + t * dy, t });
+  }
+  return results;
+}
+
+/**
+ * Get all intersection points between two entities.
+ * Returns array of {x, y}.
+ */
+export function intersectEntities(e1, e2) {
+  const segs1 = entitySegments(e1);
+  const segs2 = entitySegments(e2);
+  const results = [];
+  for (const s1 of segs1) {
+    for (const s2 of segs2) {
+      const p = segSegIntersect(s1.a, s1.b, s2.a, s2.b);
+      if (p) results.push(p);
+    }
+  }
+  // Also handle circle-line intersections
+  if (e1.type === 'circle' || e1.type === 'arc') {
+    for (const s2 of segs2) {
+      const pts = lineCircleIntersect(s2.a, s2.b, e1.cx, e1.cy, e1.r);
+      for (const p of pts) {
+        if (p.t >= -1e-9 && p.t <= 1 + 1e-9) {
+          if (e1.type === 'arc') {
+            const a = Math.atan2(p.y - e1.cy, p.x - e1.cx);
+            if (!isAngleInArcRange(a, e1.startAngle, e1.endAngle)) continue;
+          }
+          results.push({ x: p.x, y: p.y });
+        }
+      }
+    }
+  }
+  if (e2.type === 'circle' || e2.type === 'arc') {
+    for (const s1 of segs1) {
+      const pts = lineCircleIntersect(s1.a, s1.b, e2.cx, e2.cy, e2.r);
+      for (const p of pts) {
+        if (p.t >= -1e-9 && p.t <= 1 + 1e-9) {
+          if (e2.type === 'arc') {
+            const a = Math.atan2(p.y - e2.cy, p.x - e2.cx);
+            if (!isAngleInArcRange(a, e2.startAngle, e2.endAngle)) continue;
+          }
+          results.push({ x: p.x, y: p.y });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+/** Returns true if angle a is in arc range [startAngle, endAngle] CW */
+export function isAngleInArcRange(a, startAngle, endAngle) {
+  let sweep = endAngle - startAngle;
+  while (sweep < 0) sweep += Math.PI * 2;
+  let off = a - startAngle;
+  while (off < 0) off += Math.PI * 2;
+  return off <= sweep + 1e-9;
+}
+
+/**
+ * Get entity as line segments for intersection tests.
+ * Returns [{a:{x,y}, b:{x,y}}]
+ * Note: circles/arcs return empty (handled separately in intersectEntities)
+ */
+export function entitySegments(ent) {
+  switch (ent.type) {
+    case 'line':
+      return [{ a: ent.start, b: ent.end }];
+    case 'polyline': {
+      const pts = ent.closed ? [...ent.points, ent.points[0]] : ent.points;
+      const segs = [];
+      for (let i = 0; i < pts.length - 1; i++) segs.push({ a: pts[i], b: pts[i + 1] });
+      return segs;
+    }
+    case 'rect': {
+      const x1 = ent.x, y1 = ent.y, x2 = ent.x + ent.width, y2 = ent.y + ent.height;
+      return [
+        { a: { x: x1, y: y1 }, b: { x: x2, y: y1 } },
+        { a: { x: x2, y: y1 }, b: { x: x2, y: y2 } },
+        { a: { x: x2, y: y2 }, b: { x: x1, y: y2 } },
+        { a: { x: x1, y: y2 }, b: { x: x1, y: y1 } },
+      ];
+    }
+    case 'circle': return []; // handled by lineCircleIntersect
+    case 'arc': return [];    // handled by lineCircleIntersect
+    default: return [];
+  }
+}
+
+/**
+ * Offset a line segment by signed distance (positive = left of direction).
+ * Returns { p1, p2 } or null.
+ */
+export function offsetLineSegment(a, b, d) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-10) return null;
+  const nx = -dy / len, ny = dx / len;
+  return {
+    p1: { x: a.x + nx * d, y: a.y + ny * d },
+    p2: { x: b.x + nx * d, y: b.y + ny * d },
+  };
+}
+
+/** Sign of which side of directed line a→b the point p is on */
+export function sideOfLine(p, a, b) {
+  return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+}
+
+/**
+ * Project point p onto infinite line through a,b.
+ * Returns { point, t } where t=0 at a, t=1 at b.
+ */
+export function projectPointOnLine(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  if (l2 < 1e-20) return { point: { ...a }, t: 0 };
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+  return { point: { x: a.x + t * dx, y: a.y + t * dy }, t };
+}
+
+/**
+ * Normalize angle to [0, 2π)
+ */
+export function normalizeAngle(a) {
+  while (a < 0) a += Math.PI * 2;
+  while (a >= Math.PI * 2) a -= Math.PI * 2;
+  return a;
+}

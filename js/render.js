@@ -112,6 +112,15 @@ function createEntityElement(ent, isSelected = false, isPreview = false) {
       return el; // Text doesn't use stroke
     }
 
+    case 'hatch': {
+      el = svgEl('polygon', {
+        points: ent.boundary.map(p => `${p.x},${p.y}`).join(' '),
+        fill: isSelected ? 'rgba(88,166,255,0.3)' : _hatchFill(ent, isSelected ? selColor : getEffectiveColor(ent)),
+        stroke: 'none',
+      });
+      return el;
+    }
+
     default:
       return null;
   }
@@ -157,6 +166,35 @@ function getEntityHandlePoints(ent) {
     case 'text': return [{ x: ent.x, y: ent.y }];
     default: return [];
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hatch fill helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _hatchFill(ent, color) {
+  if (ent.pattern === 'solid') return color;
+  // For line/cross patterns, create an SVG pattern and return url reference
+  const patId = `hatch-pat-${ent.id}`;
+  const defs = document.querySelector('#cad-svg defs');
+  if (!defs) return color;
+  // Remove old pattern with same id
+  const old = document.getElementById(patId);
+  if (old) old.remove();
+
+  const sp = ent.spacing / state.view.zoom;
+  const pat = svgEl('pattern', {
+    id: patId,
+    width: sp, height: sp,
+    patternUnits: 'userSpaceOnUse',
+    patternTransform: `rotate(${ent.angle || 45})`,
+  });
+  svgEl('line', { x1: 0, y1: 0, x2: 0, y2: sp, stroke: color, 'stroke-width': 0.5 / state.view.zoom }, pat);
+  if (ent.pattern === 'cross') {
+    svgEl('line', { x1: 0, y1: 0, x2: sp, y2: 0, stroke: color, 'stroke-width': 0.5 / state.view.zoom }, pat);
+  }
+  defs.appendChild(pat);
+  return `url(#${patId})`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

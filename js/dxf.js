@@ -125,6 +125,18 @@ export function exportDXF() {
         g(1, ent.text);
         if (ent.angle) g(50, (ent.angle * 180 / Math.PI).toFixed(4));
         break;
+
+      case 'hatch':
+        // Export as closed LWPOLYLINE (boundary)
+        g(0, 'LWPOLYLINE');
+        g(8, layerName);
+        g(90, ent.boundary.length);
+        g(70, 1); // closed
+        for (const p of ent.boundary) {
+          g(10, p.x.toFixed(6));
+          g(20, (-p.y).toFixed(6));
+        }
+        break;
     }
   }
 

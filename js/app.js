@@ -6,7 +6,7 @@ import { state, screenToWorld, computeSnapPoint, undo, redo, pushHistory, zoomEx
 import { render } from './render.js';
 import {
   TOOLS, activateTool, deleteSelected, selectAll,
-  commitText, polylineTool,
+  commitText, polylineTool, offsetTool, filletTool, arrayTool, hatchTool,
 } from './tools.js';
 import {
   log, logError, updateStatusBar,
@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
   activateTool('SELECT');
 
   log('XNH 2DCAD ready. Type a command or select a tool.');
-  log('Shortcuts: L=Line  PL=Pline  REC=Rect  C=Circle  A=Arc  T=Text  M=Move  CP=Copy  F8=Ortho  F3=Snap');
+  log('Draw: L PL REC C A T  |  Edit: M CP O TR EX F S AR H  |  F8=Ortho F3=Snap');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,6 +464,20 @@ const CMD_ALIASES = {
   'SNAP': 'SNAP',
   'SELECT':'SELECT',
   'SEL':  'SELECT',
+  'O':    'OFFSET',
+  'OFFSET': 'OFFSET',
+  'TR':   'TRIM',
+  'TRIM': 'TRIM',
+  'EX':   'EXTEND',
+  'EXTEND': 'EXTEND',
+  'F':    'FILLET',
+  'FILLET': 'FILLET',
+  'S':    'STRETCH',
+  'STRETCH': 'STRETCH',
+  'AR':   'ARRAY',
+  'ARRAY': 'ARRAY',
+  'H':    'HATCH',
+  'HATCH': 'HATCH',
 };
 
 function processCommand(raw) {
@@ -472,6 +486,34 @@ function processCommand(raw) {
   // Check if it's a coordinate (x,y or @dx,dy)
   if (/^@?-?\d+\.?\d*,\s*-?\d+\.?\d*$/.test(raw)) {
     handleCoordInput(raw);
+    return;
+  }
+
+  // Numeric input for tool distance parameters
+  if (/^[\d.]+$/.test(raw)) {
+    const val = parseFloat(raw);
+    if (state.tool === 'OFFSET' && TOOLS.OFFSET.setDistance) {
+      TOOLS.OFFSET.setDistance(val);
+      return;
+    }
+    if (state.tool === 'FILLET' && TOOLS.FILLET.setRadius) {
+      TOOLS.FILLET.setRadius(val);
+      return;
+    }
+  }
+  // Array configuration: "rows,cols" or "rows,cols,rowSpacing,colSpacing"
+  if (state.tool === 'ARRAY' && /^\d+,\d+/.test(raw)) {
+    const parts = raw.split(',').map(Number);
+    if (parts.length >= 2) {
+      const [rows, cols, rs = 50, cs = 50] = parts;
+      TOOLS.ARRAY.configure(rows, cols, rs, cs);
+      log(`Array configured: ${rows}x${cols}, spacing ${rs}/${cs}`);
+      return;
+    }
+  }
+  // Hatch pattern
+  if (state.tool === 'HATCH' && ['solid', 'lines', 'cross'].includes(raw.toLowerCase())) {
+    TOOLS.HATCH.setPattern(raw.toLowerCase());
     return;
   }
 
@@ -489,6 +531,13 @@ function processCommand(raw) {
     case 'MOVE':
     case 'COPY':
     case 'SELECT':
+    case 'OFFSET':
+    case 'TRIM':
+    case 'EXTEND':
+    case 'FILLET':
+    case 'STRETCH':
+    case 'ARRAY':
+    case 'HATCH':
       activateTool(cmd);
       break;
 
@@ -560,6 +609,7 @@ function processCommand(raw) {
     case 'HELP':
     case '?':
       log('Commands: L PL REC C A T M CP E U REDO Z E ORTHO SNAP GRID SAVE OPEN DXF');
+      log('Edit: O=Offset  TR=Trim  EX=Extend  F=Fillet  S=Stretch  AR=Array  H=Hatch');
       log('Coordinate input: x,y (absolute) or @dx,dy (relative)');
       break;
 
