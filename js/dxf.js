@@ -137,6 +137,40 @@ export function exportDXF() {
           g(20, (-p.y).toFixed(6));
         }
         break;
+
+      case 'dim': {
+        // Export as TEXT + lines (universal compatibility)
+        if (ent.dimType === 'linear_h' || ent.dimType === 'linear_v' || ent.dimType === 'aligned') {
+          let val, mx, my;
+          if (ent.dimType === 'linear_h') {
+            val = Math.abs(ent.p2.x - ent.p1.x).toFixed(3);
+            mx = (ent.p1.x + ent.p2.x) / 2;
+            my = -ent.dimPt.y;
+          } else if (ent.dimType === 'linear_v') {
+            val = Math.abs(ent.p2.y - ent.p1.y).toFixed(3);
+            mx = ent.dimPt.x;
+            my = -((ent.p1.y + ent.p2.y) / 2);
+          } else {
+            val = Math.hypot(ent.p2.x - ent.p1.x, ent.p2.y - ent.p1.y).toFixed(3);
+            mx = (ent.p1.x + ent.p2.x) / 2;
+            my = -((ent.p1.y + ent.p2.y) / 2);
+          }
+          g(0, 'TEXT'); g(8, layerName); g(10, mx.toFixed(6)); g(20, my.toFixed(6)); g(30, 0);
+          g(40, (10).toFixed(6)); g(1, ent.textOverride || val); g(72, 1);
+        } else if (ent.dimType === 'radius') {
+          g(0, 'TEXT'); g(8, layerName);
+          g(10, (ent.cx + ent.r * 0.5 * Math.cos(ent.angle)).toFixed(6));
+          g(20, (-ent.cy - ent.r * 0.5 * Math.sin(ent.angle)).toFixed(6)); g(30, 0);
+          g(40, (10).toFixed(6));
+          g(1, ent.textOverride || `R ${ent.r.toFixed(3)}`);
+        } else if (ent.dimType === 'diameter') {
+          g(0, 'TEXT'); g(8, layerName);
+          g(10, ent.cx.toFixed(6)); g(20, (-ent.cy).toFixed(6)); g(30, 0);
+          g(40, (10).toFixed(6));
+          g(1, ent.textOverride || `D ${(ent.r * 2).toFixed(3)}`);
+        }
+        break;
+      }
     }
   }
 

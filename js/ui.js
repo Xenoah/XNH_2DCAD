@@ -372,6 +372,25 @@ export function renderPropertiesPanel() {
       rows.push(['Y', ent.y.toFixed(3), true, v => { pushHistory(); ent.y = parseFloat(v); render(); }]);
       rows.push(['Font Size', ent.fontSize, true, v => { pushHistory(); ent.fontSize = parseFloat(v); render(); }]);
       break;
+    case 'dim':
+      rows.push(['Dim Type', ent.dimType, false]);
+      if (ent.p1) {
+        rows.push(['P1 X', ent.p1.x.toFixed(3), true, v => { pushHistory(); ent.p1.x = parseFloat(v); render(); }]);
+        rows.push(['P1 Y', ent.p1.y.toFixed(3), true, v => { pushHistory(); ent.p1.y = parseFloat(v); render(); }]);
+        rows.push(['P2 X', ent.p2.x.toFixed(3), true, v => { pushHistory(); ent.p2.x = parseFloat(v); render(); }]);
+        rows.push(['P2 Y', ent.p2.y.toFixed(3), true, v => { pushHistory(); ent.p2.y = parseFloat(v); render(); }]);
+        let measured;
+        if (ent.dimType === 'linear_h') measured = Math.abs(ent.p2.x - ent.p1.x).toFixed(3);
+        else if (ent.dimType === 'linear_v') measured = Math.abs(ent.p2.y - ent.p1.y).toFixed(3);
+        else measured = Math.hypot(ent.p2.x - ent.p1.x, ent.p2.y - ent.p1.y).toFixed(3);
+        rows.push(['Measured', measured, false]);
+      } else {
+        rows.push(['Center X', ent.cx.toFixed(3), true, v => { pushHistory(); ent.cx = parseFloat(v); render(); }]);
+        rows.push(['Center Y', ent.cy.toFixed(3), true, v => { pushHistory(); ent.cy = parseFloat(v); render(); }]);
+        rows.push(['Radius', ent.r.toFixed(3), false]);
+      }
+      rows.push(['Text', ent.textOverride || '', true, v => { pushHistory(); ent.textOverride = v || null; render(); }]);
+      break;
   }
 
   // Render rows

@@ -1626,6 +1626,230 @@ function _pickEntity(pt, tol, types = null) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DIMENSION tools
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const dimLinearTool = {
+  _phase: 0, _p1: null, _p2: null,
+
+  activate() {
+    state.tool = 'DIMLINEAR';
+    this._phase = 0; this._p1 = null; this._p2 = null;
+    state.previewEntity = null;
+    log('DimLinear: pick first point');
+  },
+  deactivate() { this._phase = 0; this._p1 = null; this._p2 = null; state.previewEntity = null; },
+
+  onMouseDown(e, world, snap) {
+    if (e.button !== 0) return;
+    const pt = resolvePoint(world, snap);
+    if (this._phase === 0) {
+      this._p1 = pt;
+      this._phase = 1;
+      log('DimLinear: pick second point');
+    } else if (this._phase === 1) {
+      this._p2 = pt;
+      this._phase = 2;
+      log('DimLinear: click to place dimension line');
+    } else if (this._phase === 2) {
+      const { dimType } = this._getDimType(pt);
+      pushHistory();
+      state.entities.push({
+        ...makeEntityBase('dim'),
+        dimType,
+        p1: this._p1, p2: this._p2, dimPt: pt,
+        textOverride: null,
+      });
+      log(`DimLinear: placed ${dimType === 'linear_h' ? 'horizontal' : 'vertical'} dimension`);
+      this._phase = 0; this._p1 = null; this._p2 = null;
+      state.previewEntity = null;
+      render();
+    }
+  },
+
+  onMouseMove(e, world, snap) {
+    if (this._phase < 2 || !this._p1 || !this._p2) return;
+    const pt = resolvePoint(world, snap);
+    const { dimType } = this._getDimType(pt);
+    state.previewEntity = {
+      ...makeEntityBase('dim'), dimType,
+      p1: this._p1, p2: this._p2, dimPt: pt, textOverride: null,
+    };
+    render();
+  },
+
+  _getDimType(pt) {
+    const mid = { x: (this._p1.x + this._p2.x) / 2, y: (this._p1.y + this._p2.y) / 2 };
+    const absDx = Math.abs(pt.x - mid.x), absDy = Math.abs(pt.y - mid.y);
+    return { dimType: absDy >= absDx ? 'linear_h' : 'linear_v' };
+  },
+
+  onKeyDown(e) {
+    if (e.key === 'Escape') { this.deactivate(); render(); e.preventDefault(); }
+  },
+};
+
+export const dimAlignedTool = {
+  _phase: 0, _p1: null, _p2: null,
+
+  activate() {
+    state.tool = 'DIMALIGNED';
+    this._phase = 0; this._p1 = null; this._p2 = null;
+    state.previewEntity = null;
+    log('DimAligned: pick first point');
+  },
+  deactivate() { this._phase = 0; this._p1 = null; this._p2 = null; state.previewEntity = null; },
+
+  onMouseDown(e, world, snap) {
+    if (e.button !== 0) return;
+    const pt = resolvePoint(world, snap);
+    if (this._phase === 0) {
+      this._p1 = pt; this._phase = 1;
+      log('DimAligned: pick second point');
+    } else if (this._phase === 1) {
+      this._p2 = pt; this._phase = 2;
+      log('DimAligned: click to place dimension line');
+    } else {
+      pushHistory();
+      state.entities.push({
+        ...makeEntityBase('dim'),
+        dimType: 'aligned',
+        p1: this._p1, p2: this._p2, dimPt: pt, textOverride: null,
+      });
+      log('DimAligned: placed');
+      this.deactivate(); render();
+    }
+  },
+
+  onMouseMove(e, world, snap) {
+    if (this._phase < 2) return;
+    const pt = resolvePoint(world, snap);
+    state.previewEntity = {
+      ...makeEntityBase('dim'), dimType: 'aligned',
+      p1: this._p1, p2: this._p2, dimPt: pt, textOverride: null,
+    };
+    render();
+  },
+
+  onKeyDown(e) {
+    if (e.key === 'Escape') { this.deactivate(); render(); e.preventDefault(); }
+  },
+};
+
+export const dimRadiusTool = {
+  _phase: 0, _cx: 0, _cy: 0, _r: 0,
+
+  activate() {
+    state.tool = 'DIMRADIUS';
+    this._phase = 0; state.previewEntity = null;
+    log('DimRadius: click on circle or arc');
+  },
+  deactivate() { this._phase = 0; state.previewEntity = null; },
+
+  onMouseDown(e, world, snap) {
+    if (e.button !== 0) return;
+    const pt = resolvePoint(world, snap);
+    const tol = 8 / state.view.zoom;
+
+    if (this._phase === 0) {
+      const found = state.entities.slice().reverse().find(en => {
+        const l = state.layers.find(x => x.id === en.layerId);
+        if (!l || !l.visible || l.locked) return false;
+        if (en.type === 'circle') return Math.abs(dist({ x: en.cx, y: en.cy }, pt) - en.r) < tol;
+        if (en.type === 'arc') return Math.abs(dist({ x: en.cx, y: en.cy }, pt) - en.r) < tol;
+        return false;
+      });
+      if (!found) { log('DimRadius: click on a circle or arc edge'); return; }
+      this._cx = found.cx; this._cy = found.cy; this._r = found.r;
+      this._phase = 1;
+      log('DimRadius: click to place');
+    } else {
+      const angle = Math.atan2(pt.y - this._cy, pt.x - this._cx);
+      pushHistory();
+      state.entities.push({
+        ...makeEntityBase('dim'),
+        dimType: 'radius',
+        cx: this._cx, cy: this._cy, r: this._r, angle,
+        textOverride: null,
+      });
+      log('DimRadius: placed');
+      this.deactivate(); render();
+    }
+  },
+
+  onMouseMove(e, world, snap) {
+    if (this._phase < 1) return;
+    const pt = resolvePoint(world, snap);
+    const angle = Math.atan2(pt.y - this._cy, pt.x - this._cx);
+    state.previewEntity = {
+      ...makeEntityBase('dim'), dimType: 'radius',
+      cx: this._cx, cy: this._cy, r: this._r, angle, textOverride: null,
+    };
+    render();
+  },
+
+  onKeyDown(e) {
+    if (e.key === 'Escape') { this.deactivate(); render(); e.preventDefault(); }
+  },
+};
+
+export const dimDiameterTool = {
+  _phase: 0, _cx: 0, _cy: 0, _r: 0,
+
+  activate() {
+    state.tool = 'DIMDIAMETER';
+    this._phase = 0; state.previewEntity = null;
+    log('DimDiameter: click on circle');
+  },
+  deactivate() { this._phase = 0; state.previewEntity = null; },
+
+  onMouseDown(e, world, snap) {
+    if (e.button !== 0) return;
+    const pt = resolvePoint(world, snap);
+    const tol = 8 / state.view.zoom;
+
+    if (this._phase === 0) {
+      const found = state.entities.slice().reverse().find(en => {
+        const l = state.layers.find(x => x.id === en.layerId);
+        if (!l || !l.visible || l.locked) return false;
+        if (en.type === 'circle') return Math.abs(dist({ x: en.cx, y: en.cy }, pt) - en.r) < tol;
+        return false;
+      });
+      if (!found) { log('DimDiameter: click on a circle edge'); return; }
+      this._cx = found.cx; this._cy = found.cy; this._r = found.r;
+      this._phase = 1;
+      log('DimDiameter: click to set angle');
+    } else {
+      const angle = Math.atan2(pt.y - this._cy, pt.x - this._cx);
+      pushHistory();
+      state.entities.push({
+        ...makeEntityBase('dim'),
+        dimType: 'diameter',
+        cx: this._cx, cy: this._cy, r: this._r, angle,
+        textOverride: null,
+      });
+      log('DimDiameter: placed');
+      this.deactivate(); render();
+    }
+  },
+
+  onMouseMove(e, world, snap) {
+    if (this._phase < 1) return;
+    const pt = resolvePoint(world, snap);
+    const angle = Math.atan2(pt.y - this._cy, pt.x - this._cx);
+    state.previewEntity = {
+      ...makeEntityBase('dim'), dimType: 'diameter',
+      cx: this._cx, cy: this._cy, r: this._r, angle, textOverride: null,
+    };
+    render();
+  },
+
+  onKeyDown(e) {
+    if (e.key === 'Escape') { this.deactivate(); render(); e.preventDefault(); }
+  },
+};
+
 export const TOOLS = {
   SELECT: selectTool,
   LINE: lineTool,
@@ -1643,6 +1867,10 @@ export const TOOLS = {
   STRETCH: stretchTool,
   ARRAY: arrayTool,
   HATCH: hatchTool,
+  DIMLINEAR: dimLinearTool,
+  DIMALIGNED: dimAlignedTool,
+  DIMRADIUS: dimRadiusTool,
+  DIMDIAMETER: dimDiameterTool,
 };
 
 export function activateTool(toolName) {

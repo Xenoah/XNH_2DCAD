@@ -7,6 +7,7 @@ import { render } from './render.js';
 import {
   TOOLS, activateTool, deleteSelected, selectAll,
   commitText, polylineTool, offsetTool, filletTool, arrayTool, hatchTool,
+  dimLinearTool, dimAlignedTool, dimRadiusTool, dimDiameterTool,
 } from './tools.js';
 import {
   log, logError, updateStatusBar,
@@ -45,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
   activateTool('SELECT');
 
   log('XNH 2DCAD ready. Type a command or select a tool.');
-  log('Draw: L PL REC C A T  |  Edit: M CP O TR EX F S AR H  |  F8=Ortho F3=Snap');
+  log('Draw: L PL REC C A T  |  Edit: M CP O TR EX F S AR H  |  Dim: DLI DAL DRA DDI');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,7 +232,7 @@ function initToolbarTabs() {
       document.querySelectorAll('.toolbar-tab').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       // Show/hide panels (use flex for visible, hidden for others)
-      ['draw', 'edit', 'view', 'modes'].forEach(t => {
+      ['draw', 'edit', 'view', 'modes', 'dim'].forEach(t => {
         const panel = document.getElementById(`tab-panel-${t}`);
         if (t === tab) {
           panel.classList.remove('hidden');
@@ -583,6 +584,10 @@ const CMD_DEFS = [
   { name:'EXPORT',   alias:'DXF',  desc:'Export as DXF file',               icon:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>' },
   { name:'NEW',      alias:'',     desc:'Create new drawing',               icon:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>' },
   { name:'HELP',     alias:'?',    desc:'Show command list',                icon:'<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>' },
+  { name:'DIMLINEAR',  alias:'DLI', desc:'Linear dimension (H or V)',    icon:'<line x1="5" y1="18" x2="19" y2="18"/><line x1="5" y1="6" x2="5" y2="18"/><line x1="19" y1="6" x2="19" y2="18"/><line x1="5" y1="12" x2="19" y2="12"/>' },
+  { name:'DIMALIGNED', alias:'DAL', desc:'Aligned dimension (any angle)', icon:'<line x1="3" y1="21" x2="21" y2="3"/><line x1="3" y1="12" x2="12" y2="3"/><line x1="12" y1="21" x2="21" y2="12"/>' },
+  { name:'DIMRADIUS',  alias:'DRA', desc:'Radius dimension of circle/arc',icon:'<circle cx="12" cy="12" r="9"/><line x1="12" y1="12" x2="20" y2="5"/>' },
+  { name:'DIMDIAMETER',alias:'DDI', desc:'Diameter dimension of circle',  icon:'<circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/>' },
 ];
 
 function initCmdAutocomplete(input) {
@@ -697,6 +702,15 @@ const CMD_ALIASES = {
   'ARRAY': 'ARRAY',
   'H':    'HATCH',
   'HATCH': 'HATCH',
+  'DLI':       'DIMLINEAR',
+  'DIMLINEAR': 'DIMLINEAR',
+  'DAL':       'DIMALIGNED',
+  'DIMALIGNED':'DIMALIGNED',
+  'DRA':       'DIMRADIUS',
+  'DIMRADIUS': 'DIMRADIUS',
+  'DDI':       'DIMDIAMETER',
+  'DIMDIAMETER':'DIMDIAMETER',
+  'DIM':       'DIMALIGNED',
 };
 
 function processCommand(raw) {
@@ -757,6 +771,10 @@ function processCommand(raw) {
     case 'STRETCH':
     case 'ARRAY':
     case 'HATCH':
+    case 'DIMLINEAR':
+    case 'DIMALIGNED':
+    case 'DIMRADIUS':
+    case 'DIMDIAMETER':
       activateTool(cmd);
       break;
 
